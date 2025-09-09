@@ -1,6 +1,7 @@
 package ponder.embedlam.ui
 
 import kabinet.clients.OllamaClient
+import kabinet.utils.cosineDistances
 import kabinet.utils.format
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -33,10 +34,17 @@ class BlockFeedModel(
         embedJob?.cancel()
         embedJob = ioLaunch {
             delay(1000L)
-            val millis = measureTimeMillis {
+            var millis = measureTimeMillis {
                 embedding = ollama.embed(value)?.embeddings?.firstOrNull()
             }
             println("millis: $millis perchar: ${(millis / value.length.toFloat()).format(1)}")
+            var distances: List<Float>
+            millis = measureTimeMillis {
+                distances = embedding?.let { cosineDistances(it, stateNow.blocks.map { block -> block.embedding }) }
+                    ?: emptyList()
+            }
+            println("cosineDistance millis: $millis")
+            setStateFromMain { it.copy(distances = distances) }
         }
     }
 
@@ -65,4 +73,5 @@ data class BlockFeedState(
     val blocks: List<Block> = emptyList(),
     val text: String = "",
     val label: String = "",
+    val distances: List<Float> = emptyList()
 )

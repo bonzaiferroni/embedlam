@@ -1,14 +1,18 @@
 package ponder.embedlam.ui
 
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import compose.icons.TablerIcons
 import compose.icons.tablericons.Plus
+import kabinet.utils.format
 import pondui.ui.controls.Button
 import pondui.ui.controls.LazyColumn
 import pondui.ui.controls.Row
@@ -26,11 +30,14 @@ fun BlockFeedScreen(
             TextField(state.label, onTextChanged = viewModel::setLabel, modifier = Modifier.weight(1f))
             Button(TablerIcons.Plus, onClick = viewModel::addBlock)
         }
-        TextField(state.text, onTextChanged = viewModel::setText, modifier = Modifier.fillMaxWidth())
+        TextField(state.text, onTextChanged = viewModel::setText, modifier = Modifier.fillMaxWidth().height(200.dp))
 
         LazyColumn(1) {
-            items(state.blocks) { block ->
-                Text(block.label)
+            itemsIndexed(state.blocks) { index, block ->
+                Row(1) {
+                    Text(block.label, modifier = Modifier.weight(1f))
+                    state.distances.getOrNull(index)?.let { Text(it.format(2))}
+                }
             }
         }
     }
