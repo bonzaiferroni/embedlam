@@ -1,6 +1,11 @@
 package ponder.embedlam
 
 import androidx.compose.runtime.*
+import io.github.vinceglb.filekit.PlatformFile
+import io.github.vinceglb.filekit.readString
+import kabinet.gemini.GeminiClient
+import kabinet.utils.Environment
+import kotlinx.coroutines.runBlocking
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import ponder.embedlam.model.data.Block
 import ponder.embedlam.model.data.BlockEmbedding
@@ -28,4 +33,10 @@ fun App(
 object AppDb {
     val blockDao = FileDao(Block::class) { it.blockId.value }
     val blockEmbeddingDao = FileDao(BlockEmbedding::class) { it.blockEmbeddingId.value }
+}
+
+object AppClients {
+    private val environment by lazy { runBlocking { PlatformFile("../.env").readString().let { Environment.fromText(it) } } }
+
+    val gemini by lazy { GeminiClient(environment.read("GEMINI_TOKEN")) { level, msg -> println(msg)} }
 }

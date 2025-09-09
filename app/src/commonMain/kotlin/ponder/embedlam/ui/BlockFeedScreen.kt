@@ -38,7 +38,7 @@ fun BlockFeedScreen(
             Button("Recalculate", onClick = viewModel::refreshEmbeddings)
             Expando()
             embedModels.forEach {
-                Text(it.apiLabel.take(3), modifier = Modifier.width(colWidth))
+                Text(it.modelName.take(3), modifier = Modifier.width(colWidth))
             }
         }
 
@@ -47,7 +47,7 @@ fun BlockFeedScreen(
                 Row(1) {
                     Text(block.label, modifier = Modifier.weight(1f))
                     embedModels.forEach {
-                        val distances = state.distances[ModelId(it.apiLabel)]
+                        val distances = state.distances[ModelId(it.modelName)]
                         val distance = distances?.getOrNull(index)
                         Text(distance?.format(2) ?: "-", modifier = Modifier.width(colWidth))
                     }
