@@ -3,6 +3,7 @@ package ponder.embedlam
 import androidx.compose.runtime.*
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import ponder.embedlam.model.data.Block
+import ponder.embedlam.model.data.BlockEmbedding
 
 import pondui.ui.core.PondApp
 import pondui.ui.nav.NavRoute
@@ -26,4 +27,5 @@ fun App(
 
 object AppDb {
     val blockDao = FileDao(Block::class) { it.blockId.value }
+    val blockEmbeddingDao = FileDao(BlockEmbedding::class) { it.blockEmbeddingId.value }
 }
