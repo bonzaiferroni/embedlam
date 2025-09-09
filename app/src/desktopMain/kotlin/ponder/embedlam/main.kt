@@ -3,6 +3,7 @@ package ponder.embedlam
 import androidx.compose.runtime.*
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import io.github.vinceglb.filekit.FileKit
 import kotlinx.serialization.Serializable
 import pondui.CacheFile
 import pondui.WatchWindow
@@ -12,6 +13,7 @@ import pondui.ui.nav.AppRoute
 
 fun main() {
     application {
+        FileKit.init("embedlam")
         val cacheFlow = CacheFile("appcache.json") { AppCache() }
         val cache by cacheFlow.collectAsState()
 

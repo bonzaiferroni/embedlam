@@ -6,6 +6,7 @@ import compose.icons.tablericons.Home
 import compose.icons.tablericons.Rocket
 import compose.icons.tablericons.YinYang
 import kotlinx.collections.immutable.persistentListOf
+import ponder.embedlam.ui.BlockFeedScreen
 import ponder.embedlam.ui.ExampleListScreen
 import ponder.embedlam.ui.ExampleProfileScreen
 import ponder.embedlam.ui.HelloScreen
@@ -23,11 +24,10 @@ val appConfig = PondConfig(
         RouteConfig(StartRoute::matchRoute) { defaultScreen<StartRoute> { StartScreen() } },
         RouteConfig(HelloRoute::matchRoute) { defaultScreen<HelloRoute> { HelloScreen() } },
         RouteConfig(ExampleListRoute::matchRoute) { defaultScreen<ExampleListRoute> { ExampleListScreen() } },
-        RouteConfig(ExampleProfileRoute::matchRoute) { defaultScreen<ExampleProfileRoute> { ExampleProfileScreen(it) } }
+        RouteConfig(ExampleProfileRoute::matchRoute) { defaultScreen<ExampleProfileRoute> { ExampleProfileScreen(it) } },
+        RouteConfig(BlockFeedRoute::matchRoute) { defaultScreen<BlockFeedRoute> { BlockFeedScreen() } }
     ),
     doors = persistentListOf(
-        PortalDoor(TablerIcons.Home, StartRoute),
-        PortalDoor(TablerIcons.YinYang, HelloRoute),
-        PortalDoor(TablerIcons.Rocket, ExampleListRoute),
+        PortalDoor(TablerIcons.YinYang, BlockFeedRoute),
     ),
 )
