@@ -161,7 +161,7 @@ data class BlockFeedState(
 enum class ValueType(override val label: String): LabeledEnum<ValueType> {
     Distance("Distance"),
     DistanceScaled("Distance Scaled"),
-    Similarity("Distance"),
+    Similarity("Similarity"),
     SimilarityScaled("Similarity Scaled")
 }
 

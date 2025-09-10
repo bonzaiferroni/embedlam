@@ -16,9 +16,13 @@ import compose.icons.tablericons.Plus
 import kabinet.utils.format
 import ponder.embedlam.model.data.ModelId
 import pondui.ui.behavior.selected
+import pondui.ui.charts.AxisConfig
+import pondui.ui.charts.AxisSide
 import pondui.ui.charts.LineChart
 import pondui.ui.charts.LineChartArray
 import pondui.ui.charts.LineChartConfig
+import pondui.ui.charts.LineChartWithLegend
+import pondui.ui.charts.SideAxisAutoConfig
 import pondui.ui.controls.Button
 import pondui.ui.controls.DropMenu
 import pondui.ui.controls.Expando
@@ -50,15 +54,15 @@ fun BlockFeedScreen(
             Button("Recalculate", onClick = viewModel::refreshEmbeddings)
             DropMenu(state.valueType, onSelect = viewModel::setValueType)
         }
-        Row(1) {
-            Expando()
-            embedModels.forEach {
-                Text(it.modelName.take(3), modifier = Modifier.width(colWidth))
-            }
-        }
 
         Tabs {
             Tab("Scores") {
+                Row(1) {
+                    Expando()
+                    embedModels.forEach {
+                        Text(it.modelName.take(3), modifier = Modifier.width(colWidth))
+                    }
+                }
                 LazyColumn(1) {
                     itemsIndexed(state.blocks) { index, block ->
                         Row(1) {
@@ -88,17 +92,26 @@ fun BlockFeedScreen(
             Tab("Charts") {
                 val config = remember(state.distances, state.valueType) {
                     LineChartConfig(
-                        arrays = state.distances.mapNotNull { it.value }.mapIndexed { index, distances ->
-                            LineChartArray(
-                                values = distances,
-                                color = colors.swatches[index],
-                            ) { it.getValue(state.valueType).toDouble() }
-                        },
+                        arrays = state.distances.mapNotNull { kvp -> kvp.value?.let { Pair(kvp.key, it) } }
+                            .mapIndexed { index, (modelId, distances) ->
+                                LineChartArray(
+                                    values = distances.mapIndexed { index, distance -> Pair(index, distance) },
+                                    color = colors.swatches[index],
+                                    label = modelId.value,
+                                    axis = SideAxisAutoConfig(
+                                        tickCount = 5,
+                                        side = AxisSide.Right
+                                    ),
+                                ) { (_, distance) -> distance.getValue(state.valueType).toDouble() }
+                            },
                         contentColor = localColors.content,
                     )
                 }
-                Section {
-                    LineChart(config = config, modifier = Modifier.fillMaxWidth().height(200.dp))
+                LineChartWithLegend(config) { pair ->
+                    val (text, color) = pair?.let { (index, distance) ->
+                        "${state.blocks[index].label}: ${distance.getValue(state.valueType).format(2) }" to colors.swatches[index]
+                    } ?: ("-" to localColors.content)
+                    Text(text, color = color)
                 }
             }
         }
