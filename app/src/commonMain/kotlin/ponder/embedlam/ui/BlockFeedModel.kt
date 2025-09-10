@@ -4,6 +4,7 @@ import kabinet.clients.OllamaClient
 import kabinet.clients.OllamaModel
 import kabinet.gemini.GeminiClient
 import kabinet.gemini.generateEmbedding
+import kabinet.model.LabeledEnum
 import kabinet.utils.cosineDistances
 import kabinet.utils.format
 import kabinet.utils.normalize
@@ -64,7 +65,12 @@ class BlockFeedModel(
             val distances = textEmbeddings.entries.associate { (modelId, embedding) ->
                 val blockEmbeddings = stateNow.blocks.takeIf { it.size == feedEmbeddings[modelId]?.size }
                     ?.mapNotNull { feedEmbeddings[modelId]?.get(it.blockId)?.embedding }
-                modelId to blockEmbeddings?.let { cosineDistances(embedding, it) }
+                val cosineSimilarities = blockEmbeddings?.let { cosineDistances(embedding, it) }
+                val minMaxScales = cosineSimilarities?.minMaxScale()
+                val distances = if (cosineSimilarities != null && minMaxScales != null) cosineSimilarities.mapIndexed { index, similarity ->
+                    SemanticDistance(similarity, minMaxScales[index])
+                } else { null }
+                modelId to distances
             }
             setStateFromMain { it.copy(distances = distances) }
         }
@@ -140,14 +146,24 @@ class BlockFeedModel(
             blockEmbeddingDao.batchUpsert(blockEmbeddings)
         }
     }
+
+    fun setValueType(value: ValueType) = setState { it.copy(valueType = value) }
 }
 
 data class BlockFeedState(
     val blocks: List<Block> = emptyList(),
     val text: String = "",
     val label: String = "",
-    val distances: Map<ModelId, List<Float>?> = emptyMap()
+    val distances: Map<ModelId, List<SemanticDistance>?> = emptyMap(),
+    val valueType: ValueType = ValueType.Distance
 )
+
+enum class ValueType(override val label: String): LabeledEnum<ValueType> {
+    Distance("Distance"),
+    DistanceScaled("Distance Scaled"),
+    Similarity("Distance"),
+    SimilarityScaled("Similarity Scaled")
+}
 
 val embedModels = listOf(
     OllamaEmbed(OllamaModel.NomicEmbed),
@@ -168,4 +184,33 @@ data class OllamaEmbed(
 
 object GeminiEmbed: EmbedMode {
     override val modelName = "gemini-embed-001"
+}
+
+fun List<Float>.minMaxScale(targetMin: Float = 0f, targetMax: Float = 1f): List<Float> {
+    if (isEmpty()) return this
+    var min = Float.POSITIVE_INFINITY
+    var max = Float.NEGATIVE_INFINITY
+    for (v in this) {
+        if (v < min) min = v
+        if (v > max) max = v
+    }
+    val srcRange = max - min
+    val dstRange = targetMax - targetMin
+    if (srcRange == 0f || dstRange == 0f) return List<Float>(size) { targetMin }
+    return List<Float>(size) { ((this[it] - min) / srcRange) * dstRange + targetMin }
+}
+
+data class SemanticDistance(
+    val distance: Float,
+    val distanceScaled: Float,
+) {
+    val similarity get() = 1 - distance
+    val similarityScaled get() = 1 - distanceScaled
+
+    fun getValue(valueType: ValueType) = when (valueType) {
+        ValueType.Distance -> distance
+        ValueType.DistanceScaled -> distanceScaled
+        ValueType.Similarity -> similarity
+        ValueType.SimilarityScaled -> similarityScaled
+    }
 }
