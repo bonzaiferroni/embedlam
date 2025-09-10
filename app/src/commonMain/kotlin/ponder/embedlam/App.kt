@@ -9,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 import org.jetbrains.compose.ui.tooling.preview.Preview
 import ponder.embedlam.model.data.Block
 import ponder.embedlam.model.data.BlockEmbedding
+import ponder.embedlam.model.data.Tag
 
 import pondui.ui.core.PondApp
 import pondui.ui.nav.NavRoute
@@ -33,6 +34,7 @@ fun App(
 object AppDb {
     val blockDao = FileDao(Block::class) { it.blockId.value }
     val blockEmbeddingDao = FileDao(BlockEmbedding::class) { it.blockEmbeddingId.value }
+    val tagDao = FileDao(Tag::class) { it.tagId.value }
 }
 
 object AppClients {

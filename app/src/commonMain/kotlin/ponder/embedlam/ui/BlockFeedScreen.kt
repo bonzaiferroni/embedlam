@@ -114,6 +114,9 @@ fun BlockFeedScreen(
                     Text(text, color = color)
                 }
             }
+            Tab("Tags") {
+
+            }
         }
     }
 }

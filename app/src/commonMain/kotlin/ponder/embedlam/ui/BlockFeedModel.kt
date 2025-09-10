@@ -21,6 +21,8 @@ import ponder.embedlam.model.data.BlockEmbedding
 import ponder.embedlam.model.data.BlockEmbeddingId
 import ponder.embedlam.model.data.BlockId
 import ponder.embedlam.model.data.ModelId
+import ponder.embedlam.model.data.Tag
+import ponder.embedlam.model.data.TagId
 import pondui.ui.core.ModelState
 import pondui.ui.core.StateModel
 import pondui.utils.FileDao
@@ -29,6 +31,7 @@ import kotlin.system.measureTimeMillis
 class BlockFeedModel(
     private val blockDao: FileDao<Block> = AppDb.blockDao,
     private val blockEmbeddingDao: FileDao<BlockEmbedding> = AppDb.blockEmbeddingDao,
+    private val tagDao: FileDao<Tag> = AppDb.tagDao,
     private val ollama: OllamaClient = OllamaClient(),
     private val geminiClient: GeminiClient = AppClients.gemini
 ) : StateModel<BlockFeedState>() {
@@ -46,6 +49,9 @@ class BlockFeedModel(
             feedEmbeddings = items.groupBy { it.modelId }.mapValues { (_, list) ->
                 list.associateBy { it.blockId }
             }
+        }
+        ioCollect(tagDao.items) { tags ->
+            setStateFromMain { it.copy(tags = tags)}
         }
     }
 
@@ -105,6 +111,7 @@ class BlockFeedModel(
             blockDao.create(
                 Block(
                     blockId = blockId,
+                    tagIds = stateNow.applyTags,
                     text = text,
                     label = label,
                     createdAt = now,
@@ -148,6 +155,48 @@ class BlockFeedModel(
     }
 
     fun setValueType(value: ValueType) = setState { it.copy(valueType = value) }
+
+    fun setTagLabel(value: String) = setState { it.copy(tagLabel = value) }
+
+    fun createTag(maxColorIndex: Int) {
+        val tagLabel = stateNow.tagLabel.takeIf { it.isNotEmpty() } ?: return
+        val tagColorIndex = stateNow.tagColorIndex
+        ioLaunch {
+            val tagId = TagId.random()
+            tagDao.create(Tag(
+                tagId = tagId,
+                label = tagLabel,
+                colorIndex = tagColorIndex,
+                createdAt = Clock.System.now()
+            ))
+
+            setStateFromMain { it.copy(
+                tagColorIndex = tagColorIndex + 1 % maxColorIndex,
+                tagLabel = "",
+                applyTags = it.applyTags + tagId
+            )}
+        }
+    }
+
+    fun removeTag(tag: Tag) {
+        ioLaunch {
+            tagDao.delete(tag)
+            val updatedBlocks = stateNow.blocks.mapNotNull {
+                if (it.tagIds.contains(tag.tagId)) it.copy(tagIds = it.tagIds - tag.tagId) else null
+            }
+            blockDao.batchUpsert(updatedBlocks)
+
+            setStateFromMain { it.copy(applyTags = it.applyTags - tag.tagId) }
+        }
+    }
+
+    fun addTag(tag: Tag, block: Block) {
+        ioLaunch { blockDao.update(block.copy(tagIds = block.tagIds + tag.tagId)) }
+    }
+
+    fun removeTag(tag: Tag, block: Block) {
+        ioLaunch { blockDao.update(block.copy(tagIds = block.tagIds - tag.tagId)) }
+    }
 }
 
 data class BlockFeedState(
@@ -155,7 +204,11 @@ data class BlockFeedState(
     val text: String = "",
     val label: String = "",
     val distances: Map<ModelId, List<SemanticDistance>?> = emptyMap(),
-    val valueType: ValueType = ValueType.Distance
+    val valueType: ValueType = ValueType.Distance,
+    val tags: List<Tag> = emptyList(),
+    val applyTags: Set<TagId> = emptySet(),
+    val tagLabel: String = "",
+    val tagColorIndex: Int = 0,
 )
 
 enum class ValueType(override val label: String): LabeledEnum<ValueType> {

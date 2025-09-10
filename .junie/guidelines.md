@@ -50,7 +50,7 @@ The following functions define workflows and parameters. These may be invoked as
 
 CreateModel(Foo):
 * Create a new data class in the form of `data class Foo(val fooId: FooId)` in the package `ponder.embedlam.model.data`. It must be serializable.
-* Also create the value class `value class FooId(override val fooId: String): TableId<String>`.
+* Also create the value class `value class FooId(override val fooId: String): TableId<String> { companion object { fun random() = FooId(randomUuidString()) } }`.
 
 CreateTable(Foo):
 * Create a new table in the form of FooTable in the file FooTable.kt that will provide Foo objects.
