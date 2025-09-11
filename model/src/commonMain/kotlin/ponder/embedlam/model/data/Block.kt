@@ -12,7 +12,7 @@ data class Block(
     val tagIds: Set<TagId>,
     val label: String,
     val text: String,
-    // val embeddings: Map<ModelId, FloatArray>,
+    val embeddings: Map<ModelId, FloatArray> = emptyMap(),
     val createdAt: Instant
 )
 

@@ -33,12 +33,20 @@ fun App(
 
 object AppDb {
     val blockDao = FileDao(Block::class) { it.blockId.value }
-    val blockEmbeddingDao = FileDao(BlockEmbedding::class) { it.blockEmbeddingId.value }
     val tagDao = FileDao(Tag::class) { it.tagId.value }
 }
 
 object AppClients {
-    private val environment by lazy { runBlocking { PlatformFile("../.env").readString().let { Environment.fromText(it) } } }
+    private val environment by lazy {
+        runBlocking {
+            PlatformFile("../.env").readString().let { Environment.fromText(it) }
+        }
+    }
 
-    val gemini by lazy { GeminiClient(environment.read("GEMINI_TOKEN")) { level, msg -> println(msg)} }
+    val gemini by lazy {
+        GeminiClient(
+            token = environment.read("GEMINI_TOKEN_A"),
+            backupToken = environment.read("GEMINI_TOKEN_B"),
+        ) { level, msg -> println(msg) }
+    }
 }

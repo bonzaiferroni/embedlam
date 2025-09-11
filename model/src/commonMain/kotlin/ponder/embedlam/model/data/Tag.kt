@@ -11,6 +11,7 @@ data class Tag(
     val tagId: TagId,
     val label: String,
     val colorIndex: Int,
+    val avgEmbeddings: Map<ModelId, FloatArray>,
     val createdAt: Instant
 )
 
