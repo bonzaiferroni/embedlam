@@ -15,10 +15,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import compose.icons.TablerIcons
 import compose.icons.tablericons.Plus
-import compose.icons.tablericons.Trash
 import kabinet.utils.format
-import kotlinx.collections.immutable.toImmutableList
-import ponder.embedlam.model.data.ModelId
 import pondui.ui.behavior.selected
 import pondui.ui.charts.AxisSide
 import pondui.ui.charts.LineChartArray
@@ -28,7 +25,6 @@ import pondui.ui.charts.SideAxisAutoConfig
 import pondui.ui.controls.Button
 import pondui.ui.controls.Column
 import pondui.ui.controls.DropMenu
-import pondui.ui.controls.Expando
 import pondui.ui.controls.FlowRow
 import pondui.ui.controls.Label
 import pondui.ui.controls.LazyColumn
@@ -121,7 +117,7 @@ fun BlockFeedScreen(
                                     }
                                     Row(1) {
                                         embedModels.forEach { model ->
-                                            val distances = state.textDistances[model.modelId]
+                                            val distances = state.blockDistances[model.modelId]
                                             val distance = distances?.getOrNull(index)
                                             val text = when (distance) {
                                                 null -> "-"
@@ -134,7 +130,7 @@ fun BlockFeedScreen(
                                             Text(
                                                 text = text,
                                                 color = color,
-                                                style = Pond.typo.body.copy(fontSize = 12.sp),
+                                                style = Pond.typo.body.copy(fontSize = 11.sp),
                                                 modifier = Modifier.width(colWidth)
                                                     .selected(distance?.distanceScaled == 0f)
                                             )
@@ -144,7 +140,9 @@ fun BlockFeedScreen(
                                 MoreMenu() {
                                     state.tags.filter { !block.tagIds.contains(it.tagId) }.forEach { tag ->
                                         val color = colors.swatches[tag.colorIndex]
-                                        MoreMenuItem(label = tag.label, color = color) { }
+                                        MoreMenuItem(label = tag.label, color = color) {
+                                            viewModel.addTag(tag, block)
+                                        }
                                     }
                                 }
                             }
@@ -152,28 +150,54 @@ fun BlockFeedScreen(
                     }
                 }
             }
-            Tab("Charts") {
-                val config = remember(state.textDistances, state.valueType) {
+            Tab("BCharts") {
+                val config = remember(state.blockDistances, state.valueType) {
                     LineChartConfig(
                         arrays = embedModels.mapIndexedNotNull { index, model ->
-                            state.textDistances[model.modelId]?.let { distances ->
+                            state.blockDistances[model.modelId]?.let { distances ->
                                 LineChartArray(
-                                    values = distances.mapIndexed { index, distance -> Pair(index, distance) },
+                                    values = distances.map { distance -> distance },
                                     color = colors.swatches[index],
                                     label = model.label,
                                     axis = SideAxisAutoConfig(
                                         tickCount = 5,
                                         side = AxisSide.Right
                                     ),
-                                ) { (_, distance) -> distance.getValue(state.valueType).toDouble() }
+                                ) { distance -> distance.getValue(state.valueType).toDouble() }
                             }
                         },
                         contentColor = localColors.content,
                     )
                 }
-                LineChartWithLegend(config) { pair ->
-                    val (text, color) = pair?.let { (index, distance) ->
-                        "${state.blocks[index].label}: ${distance.getValue(state.valueType).format(2) }" to colors.swatches[index]
+                LineChartWithLegend(config) { hoverInfo ->
+                    val (text, color) = hoverInfo?.let { (distance, array) ->
+                        "${distance.label} (${array.label}): ${distance.getValue(state.valueType).format(2) }" to array.color
+                    } ?: ("-" to localColors.content)
+                    Text(text, color = color)
+                }
+            }
+            Tab("TCharts") {
+                val config = remember(state.tagDistances, state.valueType) {
+                    LineChartConfig(
+                        arrays = embedModels.mapIndexedNotNull { index, model ->
+                            state.tagDistances[model.modelId]?.let { distances ->
+                                LineChartArray(
+                                    values = distances.map { distance -> distance },
+                                    color = colors.swatches[index],
+                                    label = model.label,
+                                    axis = SideAxisAutoConfig(
+                                        tickCount = 5,
+                                        side = AxisSide.Right
+                                    ),
+                                ) { distance -> distance.getValue(state.valueType).toDouble() }
+                            }
+                        },
+                        contentColor = localColors.content,
+                    )
+                }
+                LineChartWithLegend(config) { hoverInfo ->
+                    val (text, color) = hoverInfo?.let { (distance, array) ->
+                        "${distance.label} (${array.label}): ${distance.getValue(state.valueType).format(2) }" to array.color
                     } ?: ("-" to localColors.content)
                     Text(text, color = color)
                 }
@@ -184,12 +208,17 @@ fun BlockFeedScreen(
                     Button(TablerIcons.Plus) { viewModel.createTag(colors.swatches.size) }
                 }
                 state.tags.forEach { tag ->
-                    val color = colors.swatches[tag.colorIndex]
-                    Text(text = tag.label, color = color)
+                    Row(1) {
+                        val color = colors.swatches[tag.colorIndex]
+                        Text(text = tag.label, color = color)
+                        MoreMenu {
+                            MoreMenuItem("Delete tag") { viewModel.removeTag(tag) }
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-val colWidth = 32.dp
+val colWidth = 30.dp

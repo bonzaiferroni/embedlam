@@ -12,9 +12,9 @@ import kabinet.utils.normalize
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.Clock
 import ponder.embedlam.AppDb
 import ponder.embedlam.AppClients
@@ -46,7 +46,7 @@ class BlockFeedModel(
             setStateFromMain { it.copy(blocks = filterAndSortBlocks()) }
         }
         ioCollect(tagDao.items) { tags ->
-            setStateFromMain { it.copy(tags = tags)}
+            setStateFromMain { it.copy(tags = tags.sortedByDescending { it.createdAt }) }
         }
     }
 
@@ -64,36 +64,39 @@ class BlockFeedModel(
         embedJob = ioLaunch {
             delay(1000L)
 
-            setStateFromMain { it.copy(isGenerating = true)}
+            setStateFromMain { it.copy(isGenerating = true) }
 
             textEmbeddings = embedModels.map { model -> async { model.modelId to embed(model, text) } }
                 .awaitAll()
                 .toMap()
             geminiCache.clear()
 
-            val distances = textEmbeddings.entries.associate { (modelId, embedding) ->
-                val blockEmbeddings = allBlocks.mapNotNull { it.embeddings[modelId] }.takeIf { it.isNotEmpty() }
-                val cosineSimilarities = blockEmbeddings?.let { cosineDistances(embedding, it) }
-                val minMaxScales = cosineSimilarities?.minMaxScale()
-                val distances = if (cosineSimilarities != null && minMaxScales != null) cosineSimilarities.mapIndexed { index, similarity ->
-                    SemanticDistance(similarity, minMaxScales[index])
-                } else { null }
-                modelId to distances
+            val blockDistances =
+                findDistances(stateNow.blocks, { it.label }) { item, modelId -> item.embeddings[modelId] }
+            val tagDistances =
+                findDistances(stateNow.tags, { it.label }) { item, modelId -> item.avgEmbeddings[modelId] }
+
+            setStateFromMain {
+                it.copy(
+                    blockDistances = blockDistances,
+                    tagDistances = tagDistances,
+                    isGenerating = false
+                )
             }
-            setStateFromMain { it.copy(textDistances = distances, isGenerating = false) }
         }
     }
 
     private suspend fun embed(model: EmbedModel, text: String): FloatArray {
         val embedding: FloatArray
         val millis = measureTimeMillis {
-            when(model) {
+            when (model) {
                 is GeminiEmbedModel -> {
                     embedding = geminiCache.embed(text) {
                         geminiClient.generateEmbedding(text)?.normalize()
                             ?: error("embedding not found")
                     }.take(model.dimensions).toFloatArray()
                 }
+
                 is OllamaEmbedModel -> {
                     embedding = ollama.embed(text, model.model)?.embeddings?.firstOrNull()?.normalize()
                         ?: error("embedding not found")
@@ -106,11 +109,37 @@ class BlockFeedModel(
         return embedding
     }
 
+    private fun <T> findDistances(
+        items: List<T>,
+        provideLabel: (T) -> String,
+        provideEmbeddings: (T, ModelId) -> FloatArray?
+    ): Map<ModelId, List<SemanticDistance>?> {
+        return textEmbeddings.entries.associate { (modelId, embedding) ->
+            val pairs = items.mapNotNull {
+                provideEmbeddings(it, modelId)?.let { e -> Pair(provideLabel(it), e) }
+            }.takeIf { it.isNotEmpty() }
+            if (pairs == null) {
+                return@associate modelId to null
+            }
+            val labels = pairs.map { it.first }
+            val embeddings = pairs.map { it.second }
+            val cosineSimilarities = cosineDistances(embedding, embeddings)
+            val minMaxScales = cosineSimilarities.minMaxScale()
+            modelId to cosineSimilarities.mapIndexed { index, similarity ->
+                SemanticDistance(labels[index], similarity, minMaxScales[index])
+            }
+        }
+    }
+
     fun setLabel(value: String) = setState { it.copy(textLabel = value) }
 
     fun addBlock() {
-        val text = stateNow.text.takeIf { it.isNotEmpty() } ?: return
-        val label = stateNow.textLabel.takeIf { it.isNotEmpty() } ?: "${text.take(50)}..."
+        val text = stateNow.text.takeIf { text -> text.isNotEmpty() && allBlocks.none { it.text == text } } ?: return
+        val label = stateNow.textLabel.takeIf { it.isNotEmpty() }?.incrementingLabel()
+            ?: stateNow.applyTags.takeIf { it.isNotEmpty() }
+                ?.joinToString(" ") { tagId -> stateNow.tags.first { it.tagId == tagId }.label }?.let { $$"$$it $x" }
+                ?.incrementingLabel()
+            ?: "${text.take(50)}..."
         ioLaunch {
             val blockId = BlockId.random()
             val now = Clock.System.now()
@@ -125,17 +154,34 @@ class BlockFeedModel(
                 )
             )
             refreshTagEmbeddings(stateNow.applyTags)
-            setStateFromMain { it.copy(text = "", textLabel = "") }
+            setStateFromMain {
+                it.copy(
+                    text = "",
+                    textLabel = stateNow.textLabel.takeIf { l -> l.contains($$"$x") } ?: "")
+            }
+        }
+    }
+
+    private fun String.incrementingLabel(): String {
+        if (!this.contains($$"$x")) return this
+        var index = 1
+        while (true) {
+            return this.replace($$"$x", (index++).toString())
+                .takeIf { label -> allBlocks.none { it.label.equals(label, true) } }
+                ?: continue
         }
     }
 
     fun refreshEmbeddings() {
         ioLaunch {
             val blocks = allBlocks.map { block ->
-                val embeddings = embedModels.associate { ModelId(it.modelName) to embed(it, block.text) }
+                val embeddings = embedModels.associate { model ->
+                    model.modelId to (block.embeddings[model.modelId] ?: embed(model, block.text))
+                }
                 block.copy(embeddings = embeddings)
             }
             blockDao.batchUpsert(blocks)
+            refreshTagEmbeddings(stateNow.tags.map { it.tagId }.toSet())
         }
     }
 
@@ -148,19 +194,23 @@ class BlockFeedModel(
         val tagColorIndex = stateNow.tagColorIndex
         ioLaunch {
             val tagId = TagId.random()
-            tagDao.create(Tag(
-                tagId = tagId,
-                label = tagLabel,
-                colorIndex = tagColorIndex,
-                avgEmbeddings = emptyMap(),
-                createdAt = Clock.System.now()
-            ))
+            tagDao.create(
+                Tag(
+                    tagId = tagId,
+                    label = tagLabel,
+                    colorIndex = tagColorIndex,
+                    avgEmbeddings = emptyMap(),
+                    createdAt = Clock.System.now()
+                )
+            )
 
-            setStateFromMain { it.copy(
-                tagColorIndex = tagColorIndex + 1 % maxColorIndex,
-                tagLabel = "",
-                applyTags = it.applyTags + tagId
-            )}
+            setStateFromMain {
+                it.copy(
+                    tagColorIndex = tagColorIndex + 1 % maxColorIndex,
+                    tagLabel = "",
+                    applyTags = it.applyTags + tagId
+                )
+            }
         }
     }
 
@@ -202,6 +252,7 @@ class BlockFeedModel(
                 stateNow.tags.first { it.tagId == tagId }.copy(avgEmbeddings = avgEmbeddings)
             }
             tagDao.batchUpsert(tags)
+            println("finished refresh of tag embeddings")
         }
     }
 
@@ -211,12 +262,12 @@ class BlockFeedModel(
 
     fun addFilterTag(tag: Tag) {
         setState { it.copy(filterTags = it.filterTags + tag.tagId) }
-        setState { it.copy(blocks = filterAndSortBlocks())}
+        setState { it.copy(blocks = filterAndSortBlocks()) }
     }
 
     fun removeFilterTag(tag: Tag) {
         setState { it.copy(filterTags = it.filterTags - tag.tagId) }
-        setState { it.copy(blocks = filterAndSortBlocks())}
+        setState { it.copy(blocks = filterAndSortBlocks()) }
     }
 }
 
@@ -224,7 +275,8 @@ data class BlockFeedState(
     val blocks: List<Block> = emptyList(),
     val text: String = "",
     val textLabel: String = "",
-    val textDistances: Map<ModelId, List<SemanticDistance>?> = emptyMap(),
+    val blockDistances: Map<ModelId, List<SemanticDistance>?> = emptyMap(),
+    val tagDistances: Map<ModelId, List<SemanticDistance>?> = emptyMap(),
     val valueType: ValueType = ValueType.Distance,
     val tags: List<Tag> = emptyList(),
     val applyTags: Set<TagId> = emptySet(),
@@ -234,7 +286,7 @@ data class BlockFeedState(
     val isGenerating: Boolean = false,
 )
 
-enum class ValueType(override val label: String): LabeledEnum<ValueType> {
+enum class ValueType(override val label: String) : LabeledEnum<ValueType> {
     Distance("Distance"),
     DistanceScaled("Distance Scaled"),
     Similarity("Similarity"),
@@ -244,10 +296,12 @@ enum class ValueType(override val label: String): LabeledEnum<ValueType> {
 val embedModels = listOf(
     OllamaEmbedModel(OllamaModel.NomicEmbed, "nomic"),
     OllamaEmbedModel(OllamaModel.MxbaiEmbed, "mxbai"),
+    // OllamaEmbedModel(OllamaModel.GraniteEmbed, "gran"),
+    OllamaEmbedModel(OllamaModel.MiniLm, "mini"),
     OllamaEmbedModel(OllamaModel.GemmaEmbed, "gemma"),
     // OllamaEmbedModel(OllamaModel.Qwen3Embed06B, "qwen3"),
     OllamaEmbedModel(OllamaModel.BgeM3, "bgem3"),
-    OllamaEmbedModel(OllamaModel.SnowflakeArctic, "snow"),
+    // OllamaEmbedModel(OllamaModel.SnowflakeArctic, "snow"),
     GeminiEmbedModel(3072),
     GeminiEmbedModel(768)
 )
@@ -261,13 +315,13 @@ sealed interface EmbedModel {
 data class OllamaEmbedModel(
     val model: OllamaModel,
     override val label: String = model.apiLabel
-): EmbedModel {
+) : EmbedModel {
     override val modelName get() = model.apiLabel
 }
 
 data class GeminiEmbedModel(
     val dimensions: Int,
-): EmbedModel {
+) : EmbedModel {
     val endpointModel = "gemini-embed-001"
     override val modelName get() = "$endpointModel-$dimensions"
     override val label get() = "g-$dimensions"
@@ -288,6 +342,7 @@ fun List<Float>.minMaxScale(targetMin: Float = 0f, targetMax: Float = 1f): List<
 }
 
 data class SemanticDistance(
+    val label: String,
     val distance: Float,
     val distanceScaled: Float,
 ) {
@@ -303,12 +358,14 @@ data class SemanticDistance(
 }
 
 class EmbeddingCache {
-    private val cachedEmbeddings: MutableMap<String, FloatArray> = mutableMapOf()
+    private val lock = Mutex()
+    private val cache: MutableMap<String, FloatArray> = mutableMapOf()
 
-    suspend fun embed(text: String, block: suspend () -> FloatArray) = cachedEmbeddings[text]
-        ?: block().also { cachedEmbeddings[text] = it}
+    suspend fun embed(text: String, block: suspend () -> FloatArray) = lock.withLock {
+        cache[text] ?: block().also { cache[text] = it }
+    }
 
-    fun clear() = cachedEmbeddings.clear()
+    fun clear() = cache.clear()
 }
 
 private val geminiCache = EmbeddingCache()
