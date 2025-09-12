@@ -3,6 +3,8 @@ package ponder.embedlam
 import androidx.compose.runtime.*
 import io.github.vinceglb.filekit.PlatformFile
 import io.github.vinceglb.filekit.readString
+import kabinet.clients.KoogClient
+import kabinet.clients.addOpenAiEmbedder
 import kabinet.gemini.GeminiClient
 import kabinet.utils.Environment
 import kotlinx.coroutines.runBlocking
@@ -48,5 +50,11 @@ object AppClients {
             token = environment.read("GEMINI_TOKEN_A"),
             backupToken = environment.read("GEMINI_TOKEN_B"),
         ) { level, msg -> println(msg) }
+    }
+
+    val koog by lazy {
+        KoogClient().also { koog ->
+            koog.addOpenAiEmbedder(environment.read("OPENAI_TOKEN"))
+        }
     }
 }

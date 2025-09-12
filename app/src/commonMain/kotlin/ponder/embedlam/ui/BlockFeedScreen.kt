@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import compose.icons.TablerIcons
 import compose.icons.tablericons.Plus
+import compose.icons.tablericons.Trash
 import kabinet.utils.format
 import pondui.ui.behavior.selected
 import pondui.ui.charts.AxisSide
@@ -57,7 +58,9 @@ fun BlockFeedScreen(
         Row(1) {
             Button("Recalculate", onClick = viewModel::refreshEmbeddings)
             DropMenu(state.valueType, onSelect = viewModel::setValueType)
-
+            MoreMenu {
+                MoreMenuItem("export", onClick = viewModel::exportData)
+            }
         }
         Row(1) {
             Label("Apply tags")
@@ -138,6 +141,7 @@ fun BlockFeedScreen(
                                     }
                                 }
                                 MoreMenu() {
+                                    MoreMenuItem(label = "delete", icon = TablerIcons.Trash) { viewModel.deleteBlock(block) }
                                     state.tags.filter { !block.tagIds.contains(it.tagId) }.forEach { tag ->
                                         val color = colors.swatches[tag.colorIndex]
                                         MoreMenuItem(label = tag.label, color = color) {
@@ -163,6 +167,7 @@ fun BlockFeedScreen(
                                         tickCount = 5,
                                         side = AxisSide.Right
                                     ),
+                                    floor = 0.0
                                 ) { distance -> distance.getValue(state.valueType).toDouble() }
                             }
                         },
@@ -189,6 +194,7 @@ fun BlockFeedScreen(
                                         tickCount = 5,
                                         side = AxisSide.Right
                                     ),
+                                    floor = 0.0
                                 ) { distance -> distance.getValue(state.valueType).toDouble() }
                             }
                         },

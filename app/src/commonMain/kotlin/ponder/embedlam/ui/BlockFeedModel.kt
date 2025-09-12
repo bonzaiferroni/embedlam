@@ -1,5 +1,10 @@
 package ponder.embedlam.ui
 
+import ai.koog.prompt.executor.clients.openai.OpenAIModels
+import ai.koog.prompt.llm.LLModel
+import io.github.vinceglb.filekit.PlatformFile
+import io.github.vinceglb.filekit.writeString
+import kabinet.clients.KoogClient
 import kabinet.clients.OllamaClient
 import kabinet.clients.OllamaModel
 import kabinet.gemini.GeminiClient
@@ -16,6 +21,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.Clock
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import ponder.embedlam.AppDb
 import ponder.embedlam.AppClients
 import ponder.embedlam.model.data.Block
@@ -32,7 +39,8 @@ class BlockFeedModel(
     private val blockDao: FileDao<Block> = AppDb.blockDao,
     private val tagDao: FileDao<Tag> = AppDb.tagDao,
     private val ollama: OllamaClient = OllamaClient(),
-    private val geminiClient: GeminiClient = AppClients.gemini
+    private val geminiClient: GeminiClient = AppClients.gemini,
+    private val koogClient: KoogClient = AppClients.koog
 ) : StateModel<BlockFeedState>() {
     override val state = ModelState(BlockFeedState())
 
@@ -66,7 +74,7 @@ class BlockFeedModel(
 
             setStateFromMain { it.copy(isGenerating = true) }
 
-            textEmbeddings = embedModels.map { model -> async { model.modelId to embed(model, text) } }
+            textEmbeddings = embedModels.shuffled().map { model -> async { model.modelId to embed(model, text) } }
                 .awaitAll()
                 .toMap()
             geminiCache.clear()
@@ -101,6 +109,10 @@ class BlockFeedModel(
                     embedding = ollama.embed(text, model.model)?.embeddings?.firstOrNull()?.normalize()
                         ?: error("embedding not found")
                 }
+
+                is KoogEmbedModel -> {
+                    embedding = koogClient.embed(text, model.model)
+                }
             }
         }
 
@@ -123,10 +135,10 @@ class BlockFeedModel(
             }
             val labels = pairs.map { it.first }
             val embeddings = pairs.map { it.second }
-            val cosineSimilarities = cosineDistances(embedding, embeddings)
-            val minMaxScales = cosineSimilarities.minMaxScale()
-            modelId to cosineSimilarities.mapIndexed { index, similarity ->
-                SemanticDistance(labels[index], similarity, minMaxScales[index])
+            val cosineDistances = cosineDistances(embedding, embeddings)
+            val scaledDistances = cosineDistances.scaleByMax()
+            modelId to cosineDistances.mapIndexed { index, similarity ->
+                SemanticDistance(labels[index], similarity, scaledDistances[index])
             }
         }
     }
@@ -169,6 +181,12 @@ class BlockFeedModel(
             return this.replace($$"$x", (index++).toString())
                 .takeIf { label -> allBlocks.none { it.label.equals(label, true) } }
                 ?: continue
+        }
+    }
+
+    fun deleteBlock(block: Block) {
+        ioLaunch {
+            blockDao.delete(block)
         }
     }
 
@@ -269,6 +287,12 @@ class BlockFeedModel(
         setState { it.copy(filterTags = it.filterTags - tag.tagId) }
         setState { it.copy(blocks = filterAndSortBlocks()) }
     }
+
+    fun exportData() {
+        ioLaunch {
+            PlatformFile("export.json").writeString(Json.encodeToString(ExportData(allBlocks, stateNow.tags)))
+        }
+    }
 }
 
 data class BlockFeedState(
@@ -277,7 +301,7 @@ data class BlockFeedState(
     val textLabel: String = "",
     val blockDistances: Map<ModelId, List<SemanticDistance>?> = emptyMap(),
     val tagDistances: Map<ModelId, List<SemanticDistance>?> = emptyMap(),
-    val valueType: ValueType = ValueType.Distance,
+    val valueType: ValueType = ValueType.DistanceScaled,
     val tags: List<Tag> = emptyList(),
     val applyTags: Set<TagId> = emptySet(),
     val tagLabel: String = "",
@@ -298,12 +322,13 @@ val embedModels = listOf(
     OllamaEmbedModel(OllamaModel.MxbaiEmbed, "mxbai"),
     // OllamaEmbedModel(OllamaModel.GraniteEmbed, "gran"),
     OllamaEmbedModel(OllamaModel.MiniLm, "mini"),
-    OllamaEmbedModel(OllamaModel.GemmaEmbed, "gemma"),
+//     OllamaEmbedModel(OllamaModel.GemmaEmbed, "gemma"),
     // OllamaEmbedModel(OllamaModel.Qwen3Embed06B, "qwen3"),
     OllamaEmbedModel(OllamaModel.BgeM3, "bgem3"),
     // OllamaEmbedModel(OllamaModel.SnowflakeArctic, "snow"),
     GeminiEmbedModel(3072),
-    GeminiEmbedModel(768)
+    GeminiEmbedModel(768),
+    KoogEmbedModel(OpenAIModels.Embeddings.TextEmbedding3Small, "text-3")
 )
 
 sealed interface EmbedModel {
@@ -315,16 +340,23 @@ sealed interface EmbedModel {
 data class OllamaEmbedModel(
     val model: OllamaModel,
     override val label: String = model.apiLabel
-) : EmbedModel {
+): EmbedModel {
     override val modelName get() = model.apiLabel
 }
 
 data class GeminiEmbedModel(
     val dimensions: Int,
-) : EmbedModel {
+): EmbedModel {
     val endpointModel = "gemini-embed-001"
     override val modelName get() = "$endpointModel-$dimensions"
     override val label get() = "g-$dimensions"
+}
+
+data class KoogEmbedModel(
+    val model: LLModel,
+    override val label: String,
+): EmbedModel {
+    override val modelName get() = model.id
 }
 
 fun List<Float>.minMaxScale(targetMin: Float = 0f, targetMax: Float = 1f): List<Float> {
@@ -337,8 +369,15 @@ fun List<Float>.minMaxScale(targetMin: Float = 0f, targetMax: Float = 1f): List<
     }
     val srcRange = max - min
     val dstRange = targetMax - targetMin
-    if (srcRange == 0f || dstRange == 0f) return List<Float>(size) { targetMin }
-    return List<Float>(size) { ((this[it] - min) / srcRange) * dstRange + targetMin }
+    if (srcRange == 0f || dstRange == 0f) return List(size) { targetMin }
+    return List(size) { ((this[it] - min) / srcRange) * dstRange + targetMin }
+}
+
+fun List<Float>.scaleByMax(targetMax: Float = 1f): List<Float> {
+    if (isEmpty()) return this
+    val max = maxOf { it }
+    if (max == 0f || targetMax == 0f) return List(size) { 0f }
+    return List(size) { (this[it] / max) * targetMax }
 }
 
 data class SemanticDistance(
@@ -369,3 +408,9 @@ class EmbeddingCache {
 }
 
 private val geminiCache = EmbeddingCache()
+
+@Serializable
+data class ExportData(
+    val blocks: List<Block>,
+    val tags: List<Tag>,
+)

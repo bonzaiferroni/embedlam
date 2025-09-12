@@ -24,3 +24,5 @@ captures
 **/appdata.json
 **/appcache.json
 **/users.json
+
+**/export.json
